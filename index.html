@@ -1,762 +1,413 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Cyber Stars Arena 2D</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { background: #0b0c10; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        canvas { background: #1f2833; display: block; }
+        
+        /* UI Overlay */
+        .ui-panel { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 20px; background: rgba(0,0,0,0.7); padding: 10px 25px; border-radius: 30px; border: 2px solid #66fcf1; }
+        .score { font-size: 20px; font-weight: bold; }
+        .blue-score { color: #45f3ff; }
+        .red-score { color: #ff4757; }
+        .timer { color: #f1c40f; font-size: 20px; font-weight: bold; }
 
-                this.skillCd = this.spec.skillCd;
-                const ang = Math.atan2(targetY - this.y, targetX - this.x);
+        /* Character Select Overlay */
+        #hero-select { position: absolute; inset: 0; background: rgba(11, 12, 16, 0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; }
+        #hero-select h1 { margin-bottom: 20px; color: #66fcf1; font-size: 32px; text-shadow: 0 0 10px #66fcf1; }
+        .hero-list { display: flex; gap: 15px; flex-wrap: wrap; justify-content: center; max-width: 900px; }
+        .hero-card { background: #1f2833; border: 2px solid #45a29e; border-radius: 12px; padding: 15px; width: 160px; text-align: center; cursor: pointer; transition: 0.3s; }
+        .hero-card:hover { transform: translateY(-5px); border-color: #66fcf1; box-shadow: 0 0 15px #66fcf1; }
+        .hero-card h3 { color: #66fcf1; margin-bottom: 5px; }
+        .hero-card p { font-size: 12px; color: #c5c6c7; margin-bottom: 10px; }
+        .btn-select { background: #66fcf1; color: #0b0c10; border: none; padding: 8px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; }
 
-                if (this.heroKey === 'kael') {
-                    // Shield Dash
-                    this.shield = 300;
-                    this.x += Math.cos(ang) * 140;
-                    this.y += Math.sin(ang) * 140;
-                    createExplosion(this.x, this.y, '#00f0ff', 40);
-                } else if (this.heroKey === 'luna') {
-                    // Frost Nova Teleport
-                    createExplosion(this.x, this.y, '#a855f7', 50);
-                    this.x += Math.cos(ang) * 180;
-                    this.y += Math.sin(ang) * 180;
-                    createExplosion(this.x, this.y, '#c084fc', 50);
-                } else if (this.heroKey === 'drax') {
-                    // Stealth Smoke Screen
-                    this.stealth = true;
-                    this.stealthTimer = 3.5;
-                    createExplosion(this.x, this.y, '#10b981', 60);
+        /* Mobile Controls */
+        .controls { position: absolute; bottom: 20px; width: 100%; display: flex; justify-content: space-between; padding: 0 30px; pointer-events: none; }
+        .btn-action { width: 65px; height: 65px; border-radius: 50%; background: rgba(255,255,255,0.2); border: 2px solid #fff; color: white; font-weight: bold; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+        .btn-action:active { background: rgba(102, 252, 241, 0.6); }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Top UI -->
+    <div class="ui-panel">
+        <div class="score blue-score">KO'K: <span id="blue-gems">0</span></div>
+        <div class="timer" id="timer">02:00</div>
+        <div class="score red-score">QIZIL: <span id="red-gems">0</span></div>
+    </div>
+
+    <!-- Hero Selection Screen -->
+    <div id="hero-select">
+        <h1>QAHRAMONNI TANLANG</h1>
+        <div class="hero-list" id="hero-list"></div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// Map & Game Settings
+const MAP_WIDTH = 2200;
+const MAP_HEIGHT = 1400;
+
+let gameTime = 120;
+let gameOver = false;
+let player = null;
+let entities = [];
+let crystals = [];
+let particles = [];
+let camera = { x: 0, y: 0 };
+
+// Controls
+const keys = {};
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+let mousePos = { x: 0, y: 0 };
+window.addEventListener('mousemove', e => {
+    mousePos.x = e.clientX;
+    mousePos.y = e.clientY;
+});
+
+window.addEventListener('mousedown', () => {
+    if (player && !player.dead) player.useSkill('basic');
+});
+
+// Map Static Elements
+const bases = {
+    blue: { x: 150, y: MAP_HEIGHT / 2, radius: 120 },
+    red: { x: MAP_WIDTH - 150, y: MAP_HEIGHT / 2, radius: 120 }
+};
+
+const walls = [
+    { x: 500, y: 300, w: 100, h: 300 },
+    { x: 500, y: 800, w: 100, h: 300 },
+    { x: MAP_WIDTH - 600, y: 300, w: 100, h: 300 },
+    { x: MAP_WIDTH - 600, y: 800, w: 100, h: 300 },
+    { x: MAP_WIDTH / 2 - 50, y: 200, w: 100, h: 200 },
+    { x: MAP_WIDTH / 2 - 50, y: 1000, w: 100, h: 200 }
+];
+
+const bushes = [
+    { x: 800, y: 200, r: 120 },
+    { x: 800, y: 1080, r: 120 },
+    { x: MAP_WIDTH - 800, y: 200, r: 120 },
+    { x: MAP_WIDTH - 800, y: 1080, r: 120 },
+    { x: MAP_WIDTH / 2 - 150, y: MAP_HEIGHT / 2 - 150, r: 100 },
+    { x: MAP_WIDTH / 2 + 150, y: MAP_HEIGHT / 2 + 150, r: 100 }
+];
+
+// Hero Classes Config
+const HEROES = {
+    kael: { name: 'Kael', role: 'Tank', hp: 1500, speed: 4, color: '#3498db', desc: 'Qalqonli Ritsar (Melee)' },
+    luna: { name: 'Luna', role: 'Mage', hp: 800, speed: 4.5, color: '#9b59b6', desc: 'Plazma Sehrgari (Ranged)' },
+    drax: { name: 'Drax', role: 'Marksman', hp: 900, speed: 4.8, color: '#e67e22', desc: 'Lazer Mergani (Fast DPS)' },
+    zola: { name: 'Zola', role: 'Assassin', hp: 850, speed: 5.2, color: '#e74c3c', desc: 'Soya Qotili (Fast/Stealth)' },
+    eliza: { name: 'Eliza', role: 'Support', hp: 1000, speed: 4.3, color: '#2ecc71', desc: 'Bio-Shifokor (Healer)' }
+};
+
+// Entity Class
+class Character {
+    constructor(x, y, heroKey, team, isBot = false) {
+        this.x = x;
+        this.y = y;
+        this.heroKey = heroKey;
+        this.hero = HEROES[heroKey];
+        this.team = team;
+        this.isBot = isBot;
+        
+        this.maxHp = this.hero.hp;
+        this.hp = this.maxHp;
+        this.radius = 25;
+        this.speed = this.hero.speed;
+        this.gems = 0;
+        this.dead = false;
+        this.inBush = false;
+        
+        this.angle = 0;
+        this.cooldowns = { skill1: 0, ult: 0 };
+    }
+
+    update() {
+        if (this.dead) return;
+
+        // Base Healing
+        const base = bases[this.team];
+        if (Math.hypot(this.x - base.x, this.y - base.y) < base.radius) {
+            this.hp = Math.min(this.maxHp, this.hp + 2);
+        }
+
+        // Bush Check
+        this.inBush = bushes.some(b => Math.hypot(this.x - b.x, this.y - b.y) < b.r);
+
+        // Cooldown Reduction
+        if (this.cooldowns.skill1 > 0) this.cooldowns.skill1 -= 1/60;
+        if (this.cooldowns.ult > 0) this.cooldowns.ult -= 1/60;
+
+        if (this.isBot) this.updateBotLogic();
+    }
+
+    move(dx, dy) {
+        if (this.dead) return;
+        let nextX = this.x + dx * this.speed;
+        let nextY = this.y + dy * this.speed;
+
+        // Wall Collision
+        walls.forEach(w => {
+            if (nextX + this.radius > w.x && nextX - this.radius < w.x + w.w &&
+                nextY + this.radius > w.y && nextY - this.radius < w.y + w.h) {
+                nextX = this.x;
+                nextY = this.y;
+            }
+        });
+
+        // Map Bounds
+        this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, nextX));
+        this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, nextY));
+    }
+
+    useSkill(type) {
+        if (this.dead) return;
+
+        if (type === 'basic') {
+            // Basic Attack Logic
+            createProjectile(this.x, this.y, this.angle, this.team, 12, 100, this.hero.color);
+        } else if (type === 'skill1' && this.cooldowns.skill1 <= 0) {
+            this.cooldowns.skill1 = 5;
+            if (this.heroKey === 'kael') this.x += Math.cos(this.angle) * 150; // Dash
+            if (this.heroKey === 'eliza') this.hp = Math.min(this.maxHp, this.hp + 300); // Heal
+            if (this.heroKey === 'luna') this.x += Math.cos(this.angle) * 200; // Teleport
+        } else if (type === 'ult' && this.cooldowns.ult <= 0) {
+            this.cooldowns.ult = 12;
+            // Ult Effect placeholder
+            createProjectile(this.x, this.y, this.angle, this.team, 20, 300, '#f1c40f', 40);
+        }
+    }
+
+    updateBotLogic() {
+        // Simple AI: Move towards center or crystals
+        const targetX = MAP_WIDTH / 2;
+        const targetY = MAP_HEIGHT / 2;
+        const angle = Math.atan2(targetY - this.y, targetX - this.x);
+        this.angle = angle;
+        this.move(Math.cos(angle), Math.sin(angle));
+
+        if (Math.random() < 0.02) this.useSkill('basic');
+    }
+
+    draw() {
+        if (this.dead) return;
+        
+        // Hide if in bush and not same team
+        if (this.inBush && this.team !== player.team) return;
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        // Body
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.hero.color;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = this.team === 'blue' ? '#3498db' : '#e74c3c';
+        ctx.stroke();
+
+        // Direction Indicator
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(this.angle) * 35, Math.sin(this.angle) * 35);
+        ctx.strokeStyle = '#fff';
+        ctx.stroke();
+
+        // HP Bar
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(-30, -45, 60, 8);
+        ctx.fillStyle = this.team === 'blue' ? '#2ecc71' : '#e74c3c';
+        ctx.fillRect(-30, -45, (this.hp / this.maxHp) * 60, 8);
+
+        ctx.restore();
+    }
+}
+
+// Projectile System
+let projectiles = [];
+function createProjectile(x, y, angle, team, speed, damage, color, radius = 8) {
+    projectiles.push({ x, y, dx: Math.cos(angle) * speed, dy: Math.sin(angle) * speed, team, damage, color, radius, life: 60 });
+}
+
+// Init Game
+function initHeroSelection() {
+    const container = document.getElementById('hero-list');
+    Object.keys(HEROES).forEach(key => {
+        const h = HEROES[key];
+        const card = document.createElement('div');
+        card.className = 'hero-card';
+        card.innerHTML = `
+            <h3>${h.name}</h3>
+            <p><strong>${h.role}</strong></p>
+            <p>${h.desc}</p>
+            <button class="btn-select">TANLASH</button>
+        `;
+        card.onclick = () => startGame(key);
+        container.appendChild(card);
+    });
+}
+
+function startGame(selectedHero) {
+    document.getElementById('hero-select').style.display = 'none';
+
+    // Player
+    player = new Character(bases.blue.x, bases.blue.y, selectedHero, 'blue');
+    entities.push(player);
+
+    // Bots (2 Blue, 3 Red)
+    const keys = Object.keys(HEROES);
+    entities.push(new Character(bases.blue.x, bases.blue.y - 100, keys[1], 'blue', true));
+    entities.push(new Character(bases.blue.x, bases.blue.y + 100, keys[2], 'blue', true));
+
+    entities.push(new Character(bases.red.x, bases.red.y, keys[3], 'red', true));
+    entities.push(new Character(bases.red.x, bases.red.y - 100, keys[4], 'red', true));
+    entities.push(new Character(bases.red.x, bases.red.y + 100, keys[0], 'red', true));
+
+    // Spawn Crystals periodically
+    setInterval(() => {
+        if (crystals.length < 10) {
+            crystals.push({
+                x: MAP_WIDTH / 2 + (Math.random() - 0.5) * 200,
+                y: MAP_HEIGHT / 2 + (Math.random() - 0.5) * 200
+            });
+        }
+    }, 5000);
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Main Game Loop
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Controls
+    if (player && !player.dead) {
+        let dx = 0, dy = 0;
+        if (keys['w'] || keys['arrowup']) dy -= 1;
+        if (keys['s'] || keys['arrowdown']) dy += 1;
+        if (keys['a'] || keys['arrowleft']) dx -= 1;
+        if (keys['d'] || keys['arrowright']) dx += 1;
+        
+        if (dx !== 0 || dy !== 0) player.move(dx, dy);
+
+        // Aim Angle
+        const screenCenterX = canvas.width / 2;
+        const screenCenterY = canvas.height / 2;
+        player.angle = Math.atan2(mousePos.y - screenCenterY, mousePos.x - screenCenterX);
+
+        if (keys['e']) player.useSkill('skill1');
+        if (keys['space']) player.useSkill('ult');
+    }
+
+    // Camera follow player
+    camera.x = player.x - canvas.width / 2;
+    camera.y = player.y - canvas.height / 2;
+
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
+
+    // Draw Bases
+    ['blue', 'red'].forEach(t => {
+        const b = bases[t];
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fillStyle = t === 'blue' ? 'rgba(52, 152, 219, 0.2)' : 'rgba(231, 76, 60, 0.2)';
+        ctx.fill();
+    });
+
+    // Draw Walls
+    ctx.fillStyle = '#2c3e50';
+    walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+
+    // Draw Bushes
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.4)';
+    bushes.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // Draw Crystals
+    crystals.forEach((c, idx) => {
+        ctx.fillStyle = '#9b59b6';
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pickup Check
+        entities.forEach(e => {
+            if (!e.dead && Math.hypot(e.x - c.x, e.y - c.y) < e.radius) {
+                e.gems++;
+                crystals.splice(idx, 1);
+            }
+        });
+    });
+
+    // Update & Draw Entities
+    entities.forEach(e => {
+        e.update();
+        e.draw();
+    });
+
+    // Projectiles
+    projectiles.forEach((p, idx) => {
+        p.x += p.dx;
+        p.y += p.dy;
+        p.life--;
+
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Hit Check
+        entities.forEach(e => {
+            if (!e.dead && e.team !== p.team && Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.radius) {
+                e.hp -= p.damage;
+                p.life = 0;
+                if (e.hp <= 0) {
+                    e.dead = true;
+                    e.gems = 0;
+                    setTimeout(() => { e.hp = e.maxHp; e.dead = false; e.x = bases[e.team].x; e.y = bases[e.team].y; }, 5000);
                 }
             }
+        });
 
-            useUltimate(targetX, targetY) {
-                if (this.ultCd > 0 || this.hp <= 0) return;
-                this.ultCd = this.spec.ultCd;
-                const ang = Math.atan2(targetY - this.y, targetX - this.x);
+        if (p.life <= 0) projectiles.splice(idx, 1);
+    });
 
-                if (this.heroKey === 'kael') {
-                    // Ground Shatter Slam
-                    createExplosion(this.x, this.y, '#f59e0b', 120);
-                    actors.forEach(other => {
-                        if (other !== this && other.team !== this.team && other.hp > 0) {
-                            if (Math.hypot(other.x - this.x, other.y - this.y) < 160) {
-                                other.takeDamage(320, this);
-                            }
-                        }
-                    });
-                } else if (this.heroKey === 'luna') {
-                    // Cosmic Meteor Barrage
-                    for (let i = 0; i < 5; i++) {
-                        setTimeout(() => {
-                            const rx = targetX + (Math.random() - 0.5) * 160;
-                            const ry = targetY + (Math.random() - 0.5) * 160;
-                            createExplosion(rx, ry, '#c084fc', 90);
-                            actors.forEach(other => {
-                                if (other !== this && other.team !== this.team && other.hp > 0) {
-                                    if (Math.hypot(other.x - rx, other.y - ry) < 90) {
-                                        other.takeDamage(180, this);
-                                    }
-                                }
-                            });
-                        }, i * 200);
-                    }
-                } else if (this.heroKey === 'drax') {
-                    // Orbital Laser Beam
-                    createOrbitalBeam(targetX, targetY, this);
-                }
-            }
+    ctx.restore();
 
-            takeDamage(amount, attacker) {
-                if (this.shield > 0) {
-                    if (this.shield >= amount) {
-                        this.shield -= amount;
-                        amount = 0;
-                    } else {
-                        amount -= this.shield;
-                        this.shield = 0;
-                    }
-                }
+    // UI Scores Update
+    let blueGems = entities.filter(e => e.team === 'blue').reduce((a, b) => a + b.gems, 0);
+    let redGems = entities.filter(e => e.team === 'red').reduce((a, b) => a + b.gems, 0);
+    document.getElementById('blue-gems').innerText = blueGems;
+    document.getElementById('red-gems').innerText = redGems;
 
-                this.hp -= amount;
-                if (attacker) attacker.damageDealt += amount;
+    requestAnimationFrame(gameLoop);
+}
 
-                // Floating Damage Indicator
-                showDamageText(this.x, this.y, Math.round(amount));
-
-                if (this.hp <= 0) {
-                    this.die(attacker);
-                }
-            }
-
-            die(killer) {
-                this.hp = 0;
-                createExplosion(this.x, this.y, this.spec.color, 80);
-
-                // Drop Held Gems
-                if (this.gems > 0) {
-                    for (let i = 0; i < this.gems; i++) {
-                        gems.push({
-                            x: this.x + (Math.random() - 0.5) * 60,
-                            y: this.y + (Math.random() - 0.5) * 60,
-                            radius: 12
-                        });
-                    }
-                    this.gems = 0;
-                }
-
-                if (killer) {
-                    killer.kills++;
-                    addKillFeedEntry(killer.name, this.name, killer.team);
-                }
-
-                // Respawn Timer Logic
-                setTimeout(() => {
-                    if (!gameActive) return;
-                    this.hp = this.maxHp;
-                    const spawn = this.team === 'blue' ? { x: 150, y: WORLD.height / 2 } : { x: WORLD.width - 150, y: WORLD.height / 2 };
-                    this.x = spawn.x;
-                    this.y = spawn.y;
-                }, 4000);
-            }
-
-            updateAI(dt) {
-                this.aiTimer -= dt;
-                if (this.aiTimer <= 0) {
-                    this.aiTimer = 0.2 + Math.random() * 0.2;
-
-                    // AI Target Priority: Nearest Gem OR Nearest Enemy
-                    let closestGem = null;
-                    let minDistG = 9999;
-                    gems.forEach(g => {
-                        const d = Math.hypot(g.x - this.x, g.y - this.y);
-                        if (d < minDistG) { minDistG = d; closestGem = g; }
-                    });
-
-                    let closestEnemy = null;
-                    let minDistE = 9999;
-                    actors.forEach(a => {
-                        if (a.team !== this.team && a.hp > 0 && !a.stealth) {
-                            const d = Math.hypot(a.x - this.x, a.y - this.y);
-                            if (d < minDistE) { minDistE = d; closestEnemy = a; }
-                        }
-                    });
-
-                    // Decision State
-                    if (selectedMode === 'gem' && closestGem && minDistG < 400) {
-                        this.aiTarget = closestGem;
-                    } else if (closestEnemy) {
-                        this.aiTarget = closestEnemy;
-                    } else {
-                        this.aiTarget = { x: WORLD.width / 2, y: WORLD.height / 2 };
-                    }
-                }
-
-                if (this.aiTarget) {
-                    const dx = this.aiTarget.x - this.x;
-                    const dy = this.aiTarget.y - this.y;
-                    this.move(dx, dy, dt);
-
-                    // Auto Attack / Skill Usage
-                    if (this.aiTarget.hp !== undefined && this.aiTarget.hp > 0) {
-                        const dist = Math.hypot(dx, dy);
-                        if (dist < this.spec.attackRange + 50) {
-                            this.performBasicAttack(this.aiTarget.x, this.aiTarget.y);
-                        }
-                        if (dist < 200 && this.ultCd <= 0) {
-                            this.useUltimate(this.aiTarget.x, this.aiTarget.y);
-                        } else if (dist < 150 && this.skillCd <= 0) {
-                            this.useSkill(this.aiTarget.x, this.aiTarget.y);
-                        }
-                    }
-                }
-            }
-        }
-
-        class Projectile {
-            constructor(x, y, angle, speed, dmg, maxRange, owner, color) {
-                this.x = x; this.y = y;
-                this.startX = x; this.startY = y;
-                this.vx = Math.cos(angle) * speed;
-                this.vy = Math.sin(angle) * speed;
-                this.dmg = dmg;
-                this.maxRange = maxRange;
-                this.owner = owner;
-                this.color = color;
-                this.alive = true;
-            }
-
-            update(dt) {
-                this.x += this.vx * dt;
-                this.y += this.vy * dt;
-
-                // Check Max Range
-                if (Math.hypot(this.x - this.startX, this.y - this.startY) >= this.maxRange) {
-                    this.alive = false;
-                }
-
-                // Check Wall Collision
-                for (let wall of obstacles) {
-                    if (checkCircleRectOverlap(this.x, this.y, 6, wall)) {
-                        this.alive = false;
-                        createExplosion(this.x, this.y, this.color, 15);
-                        return;
-                    }
-                }
-
-                // Check Actor Collisions
-                actors.forEach(actor => {
-                    if (this.alive && actor !== this.owner && actor.team !== this.owner.team && actor.hp > 0) {
-                        if (Math.hypot(actor.x - this.x, actor.y - this.y) < actor.radius + 6) {
-                            actor.takeDamage(this.dmg, this.owner);
-                            this.alive = false;
-                            createExplosion(this.x, this.y, this.color, 25);
-                        }
-                    }
-                });
-            }
-
-            draw() {
-                ctx.save();
-                ctx.fillStyle = this.color;
-                ctx.shadowColor = this.color;
-                ctx.shadowBlur = 10;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            }
-        }
-
-        function checkCircleRectOverlap(cx, cy, r, rect) {
-            const nearestX = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
-            const nearestY = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
-            const dx = cx - nearestX;
-            const dy = cy - nearestY;
-            return (dx * dx + dy * dy) < (r * r);
-        }
-
-        function normalizeAngle(a) {
-            while (a > Math.PI) a -= Math.PI * 2;
-            while (a < -Math.PI) a += Math.PI * 2;
-            return a;
-        }
-
-        function createExplosion(x, y, color, count = 30) {
-            for (let i = 0; i < count; i++) {
-                const ang = Math.random() * Math.PI * 2;
-                const spd = 50 + Math.random() * 200;
-                particles.push({
-                    x: x, y: y,
-                    vx: Math.cos(ang) * spd,
-                    vy: Math.sin(ang) * spd,
-                    life: 0.4 + Math.random() * 0.3,
-                    maxLife: 0.7,
-                    color: color,
-                    size: 3 + Math.random() * 4
-                });
-            }
-        }
-
-        function createSlashEffect(x, y, angle, range, team) {
-            for (let i = 0; i < 15; i++) {
-                const a = angle + (Math.random() - 0.5) * 1.2;
-                const spd = 150 + Math.random() * 150;
-                particles.push({
-                    x: x, y: y,
-                    vx: Math.cos(a) * spd,
-                    vy: Math.sin(a) * spd,
-                    life: 0.25, maxLife: 0.25,
-                    color: team === 'blue' ? '#00f0ff' : '#f43f5e',
-                    size: 4
-                });
-            }
-        }
-
-        function createOrbitalBeam(targetX, targetY, owner) {
-            let ticks = 0;
-            const beamInterval = setInterval(() => {
-                if (!gameActive || ticks > 10) { clearInterval(beamInterval); return; }
-                createExplosion(targetX, targetY, '#10b981', 40);
-                actors.forEach(other => {
-                    if (other.team !== owner.team && other.hp > 0) {
-                        if (Math.hypot(other.x - targetX, other.y - targetY) < 100) {
-                            other.takeDamage(45, owner);
-                        }
-                    }
-                });
-                ticks++;
-            }, 100);
-        }
-
-        function showDamageText(x, y, text) {
-            const el = document.createElement('div');
-            el.className = 'dmg-text text-rose-400';
-            el.innerText = text;
-            
-            // Map World Coords to Screen Coords
-            const screenX = x - (player.x - canvas.width / 2);
-            const screenY = y - (player.y - canvas.height / 2);
-            el.style.left = `${screenX}px`;
-            el.style.top = `${screenY}px`;
-            document.getElementById('game-container').appendChild(el);
-            setTimeout(() => el.remove(), 800);
-        }
-
-        function addKillFeedEntry(killer, victim, team) {
-            const feed = document.getElementById('kill-feed');
-            const item = document.createElement('div');
-            item.className = 'glass-panel px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-l-4 ' + (team === 'blue' ? 'border-cyan-400' : 'border-rose-500');
-            item.innerHTML = `<span>${killer}</span> <i class="fa-solid fa-crosshairs text-slate-400"></i> <span>${victim}</span>`;
-            feed.appendChild(item);
-            setTimeout(() => item.remove(), 3500);
-        }
-
-        function setupControls() {
-            // Resize Canvas
-            window.addEventListener('resize', resizeCanvas);
-            resizeCanvas();
-
-            // Keyboard Listeners
-            window.addEventListener('keydown', e => {
-                keys[e.key.toLowerCase()] = true;
-                if (e.code === 'Space') player?.useSkill(mouse.worldX, mouse.worldY);
-                if (e.key.toLowerCase() === 'e') player?.useUltimate(mouse.worldX, mouse.worldY);
-            });
-            window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
-            // Mouse Listeners
-            canvas.addEventListener('mousemove', e => {
-                const rect = canvas.getBoundingClientRect();
-                mouse.x = e.clientX - rect.left;
-                mouse.y = e.clientY - rect.top;
-            });
-            canvas.addEventListener('mousedown', () => {
-                mouse.isDown = true;
-                if (player && player.hp > 0) player.performBasicAttack(mouse.worldX, mouse.worldY);
-            });
-            canvas.addEventListener('mouseup', () => mouse.isDown = false);
-
-            // Touch Joystick Setup (Mobile / Telegram Mini App)
-            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-                document.getElementById('move-joystick-zone').style.display = 'block';
-                document.getElementById('aim-joystick-zone').style.display = 'block';
-
-                bindJoystick('move-joystick-zone', 'move-knob', moveJoy);
-                bindJoystick('aim-joystick-zone', 'aim-knob', aimJoy, true);
-            }
-
-            // Skill Button Click Bindings
-            document.getElementById('btn-skill1').addEventListener('click', () => {
-                player?.useSkill(mouse.worldX, mouse.worldY);
-            });
-            document.getElementById('btn-ult').addEventListener('click', () => {
-                player?.useUltimate(mouse.worldX, mouse.worldY);
-            });
-        }
-
-        function bindJoystick(zoneId, knobId, stateObj, isAim = false) {
-            const zone = document.getElementById(zoneId);
-            const knob = document.getElementById(knobId);
-            let rect = null;
-
-            zone.addEventListener('touchstart', e => {
-                e.preventDefault();
-                rect = zone.getBoundingClientRect();
-                stateObj.active = true;
-                handleTouch(e.touches[0]);
-            });
-
-            zone.addEventListener('touchmove', e => {
-                e.preventDefault();
-                if (stateObj.active) handleTouch(e.touches[0]);
-            });
-
-            const endTouch = () => {
-                stateObj.active = false;
-                stateObj.dx = 0; stateObj.dy = 0;
-                knob.style.left = '50px'; knob.style.top = '50px';
-            };
-
-            zone.addEventListener('touchend', endTouch);
-            zone.addEventListener('touchcancel', endTouch);
-
-            function handleTouch(t) {
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                let dx = t.clientX - cx;
-                let dy = t.clientY - cy;
-                const dist = Math.hypot(dx, dy);
-                const maxR = 45;
-
-                if (dist > maxR) {
-                    dx = (dx / dist) * maxR;
-                    dy = (dy / dist) * maxR;
-                }
-
-                knob.style.left = `${50 + dx}px`;
-                knob.style.top = `${50 + dy}px`;
-
-                stateObj.dx = dx / maxR;
-                stateObj.dy = dy / maxR;
-
-                if (isAim && player && player.hp > 0 && Math.hypot(dx, dy) > 15) {
-                    const targetX = player.x + stateObj.dx * 200;
-                    const targetY = player.y + stateObj.dy * 200;
-                    player.performBasicAttack(targetX, targetY);
-                }
-            }
-        }
-
-        function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        }
-
-        function selectHero(key) {
-            selectedHeroKey = key;
-            document.querySelectorAll('.hero-card').forEach(c => {
-                c.classList.remove('border-cyan-400', 'bg-cyan-950/20');
-                c.classList.add('border-slate-700', 'bg-slate-900/40');
-            });
-            const card = document.getElementById(`card-${key}`);
-            card.classList.add('border-cyan-400', 'bg-cyan-950/20');
-        }
-
-        function setMode(mode) {
-            selectedMode = mode;
-            document.getElementById('mode-gem').className = mode === 'gem' ? 
-                'px-5 py-2.5 rounded-xl font-bold text-sm bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/30 transition-all' : 
-                'px-5 py-2.5 rounded-xl font-bold text-sm text-slate-400 hover:text-white transition-all';
-            document.getElementById('mode-dm').className = mode === 'dm' ? 
-                'px-5 py-2.5 rounded-xl font-bold text-sm bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/30 transition-all' : 
-                'px-5 py-2.5 rounded-xl font-bold text-sm text-slate-400 hover:text-white transition-all';
-        }
-
-        function startGame() {
-            document.getElementById('hero-select-modal').classList.add('hidden');
-            document.getElementById('hud-panel').classList.remove('hidden');
-            document.getElementById('action-bar').classList.remove('hidden');
-
-            initArenaMap();
-            actors = [];
-            projectiles = [];
-            particles = [];
-
-            // Create Player
-            player = new Actor(150, WORLD.height / 2, selectedHeroKey, 'blue', false, "YOU");
-            actors.push(player);
-
-            // Create Teammates & Enemies (3v3 Setup)
-            if (selectedMode === 'gem') {
-                actors.push(new Actor(150, WORLD.height / 2 - 180, 'luna', 'blue', true, "Bot Blue 1"));
-                actors.push(new Actor(150, WORLD.height / 2 + 180, 'drax', 'blue', true, "Bot Blue 2"));
-
-                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2, 'kael', 'red', true, "Bot Red 1"));
-                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2 - 180, 'luna', 'red', true, "Bot Red 2"));
-                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2 + 180, 'drax', 'red', true, "Bot Red 3"));
-            } else {
-                // Free For All Deathmatch
-                const heroes = ['kael', 'luna', 'drax'];
-                for (let i = 0; i < 5; i++) {
-                    actors.push(new Actor(
-                        300 + Math.random() * (WORLD.width - 600),
-                        200 + Math.random() * (WORLD.height - 400),
-                        heroes[i % 3], 'red', true, `Enemy ${i+1}`
-                    ));
-                }
-            }
-
-            gameActive = true;
-            gameTimeLeft = 120;
-            lastTime = performance.now();
-
-            if (timerInterval) clearInterval(timerInterval);
-            timerInterval = setInterval(() => {
-                if (!gameActive) return;
-                gameTimeLeft--;
-                const mins = String(Math.floor(gameTimeLeft / 60)).padStart(2, '0');
-                const secs = String(gameTimeLeft % 60).padStart(2, '0');
-                document.getElementById('game-timer').innerText = `${mins}:${secs}`;
-
-                if (gameTimeLeft <= 0) checkVictoryCondition(true);
-            }, 1000);
-
-            requestAnimationFrame(gameLoop);
-        }
-
-        function gameLoop(now) {
-            if (!gameActive) return;
-            const dt = Math.min((now - lastTime) / 1000, 0.1);
-            lastTime = now;
-
-            update(dt);
-            render();
-
-            requestAnimationFrame(gameLoop);
-        }
-
-        function update(dt) {
-            // Handle Player Keyboard Input
-            let moveX = 0, moveY = 0;
-            if (keys['w'] || keys['arrowup']) moveY -= 1;
-            if (keys['s'] || keys['arrowdown']) moveY += 1;
-            if (keys['a'] || keys['arrowleft']) moveX -= 1;
-            if (keys['d'] || keys['arrowright']) moveX += 1;
-
-            if (moveJoy.active) {
-                moveX = moveJoy.dx;
-                moveY = moveJoy.dy;
-            }
-
-            if (player && player.hp > 0) {
-                player.move(moveX, moveY, dt);
-                if (mouse.isDown) player.performBasicAttack(mouse.worldX, mouse.worldY);
-            }
-
-            // Spawns Central Gem Crystals
-            gemSpawner.spawnTimer += dt;
-            if (gemSpawner.spawnTimer >= 5.0 && gems.length < 12) {
-                gemSpawner.spawnTimer = 0;
-                gems.push({
-                    x: gemSpawner.x + (Math.random() - 0.5) * 60,
-                    y: gemSpawner.y + (Math.random() - 0.5) * 60,
-                    radius: 12
-                });
-            }
-
-            // Update Actors
-            actors.forEach(actor => {
-                actor.update(dt);
-
-                // Pickup Gems
-                gems.forEach((gem, idx) => {
-                    if (actor.hp > 0 && Math.hypot(actor.x - gem.x, actor.y - gem.y) < actor.radius + gem.radius) {
-                        actor.gems++;
-                        gems.splice(idx, 1);
-                    }
-                });
-            });
-
-            // Update Projectiles
-            projectiles.forEach(p => p.update(dt));
-            projectiles = projectiles.filter(p => p.alive);
-
-            // Update Particles
-            particles.forEach(p => {
-                p.x += p.vx * dt;
-                p.y += p.vy * dt;
-                p.life -= dt;
-            });
-            particles = particles.filter(p => p.life > 0);
-
-            // Update HUD Stats
-            const blueGems = actors.filter(a => a.team === 'blue').reduce((acc, a) => acc + a.gems, 0);
-            const redGems = actors.filter(a => a.team === 'red').reduce((acc, a) => acc + a.gems, 0);
-            document.getElementById('blue-gems').innerText = `Gems: ${blueGems}`;
-            document.getElementById('red-gems').innerText = `Gems: ${redGems}`;
-
-            // Cooldown HUD Updates
-            if (player) {
-                updateCdOverlay('cd-skill1', player.skillCd);
-                updateCdOverlay('cd-ult', player.ultCd);
-            }
-
-            // Check Instant Win Condition (10 Gems)
-            if (selectedMode === 'gem') {
-                if (blueGems >= 10) checkVictoryCondition(false, 'Blue Team');
-                if (redGems >= 10) checkVictoryCondition(false, 'Red Team');
-            }
-        }
-
-        function updateCdOverlay(id, cdValue) {
-            const el = document.getElementById(id);
-            if (cdValue > 0) {
-                el.classList.remove('hidden');
-                el.innerText = cdValue.toFixed(1);
-            } else {
-                el.classList.add('hidden');
-            }
-        }
-
-        function render() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Camera Tracking (Centered on Player)
-            ctx.save();
-            const camX = canvas.width / 2 - player.x;
-            const camY = canvas.height / 2 - player.y;
-            ctx.translate(camX, camY);
-
-            // Update Mouse World Position
-            mouse.worldX = mouse.x - camX;
-            mouse.worldY = mouse.y - camY;
-
-            // Render Grid Floor Pattern
-            ctx.strokeStyle = '#1e293b';
-            ctx.lineWidth = 1;
-            const gridSize = 80;
-            for (let x = 0; x < WORLD.width; x += gridSize) {
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD.height); ctx.stroke();
-            }
-            for (let y = 0; y < WORLD.height; y += gridSize) {
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD.width, y); ctx.stroke();
-            }
-
-            // Render Arena Boundary
-            ctx.strokeStyle = '#00f0ff';
-            ctx.lineWidth = 4;
-            ctx.shadowColor = '#00f0ff';
-            ctx.shadowBlur = 15;
-            ctx.strokeRect(0, 0, WORLD.width, WORLD.height);
-            ctx.shadowBlur = 0;
-
-            // Render Bushes
-            bushes.forEach(b => {
-                ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
-                ctx.strokeStyle = '#10b981';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-            });
-
-            // Render Obstacles / Barriers
-            ctx.fillStyle = '#1e293b';
-            ctx.strokeStyle = '#334155';
-            ctx.lineWidth = 3;
-            obstacles.forEach(w => {
-                ctx.fillRect(w.x, w.y, w.w, w.h);
-                ctx.strokeRect(w.x, w.y, w.w, w.h);
-            });
-
-            // Render Central Gem Spawner Platform
-            ctx.fillStyle = '#0f172a';
-            ctx.strokeStyle = '#f59e0b';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(gemSpawner.x, gemSpawner.y, 45, 0, Math.PI * 2);
-            ctx.fill(); ctx.stroke();
-
-            // Render Gems
-            gems.forEach(g => {
-                ctx.fillStyle = '#f59e0b';
-                ctx.shadowColor = '#f59e0b';
-                ctx.shadowBlur = 12;
-                ctx.beginPath();
-                ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.shadowBlur = 0;
-            });
-
-            // Render Projectiles
-            projectiles.forEach(p => p.draw());
-
-            // Render Particles
-            particles.forEach(p => {
-                ctx.fillStyle = p.color;
-                ctx.globalAlpha = p.life / p.maxLife;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-            });
-
-            // Render Actors / Players
-            actors.forEach(actor => {
-                if (actor.hp <= 0) return;
-
-                // Stealth Visibility Check
-                if (actor.stealth && actor.team !== player.team) return;
-
-                ctx.save();
-                ctx.translate(actor.x, actor.y);
-
-                // Bush Stealth Transparency
-                if (actor.inBush) ctx.globalAlpha = 0.5;
-
-                // Player Indicator Ring
-                ctx.strokeStyle = actor.team === 'blue' ? '#00f0ff' : '#f43f5e';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(0, 0, actor.radius + 4, 0, Math.PI * 2);
-                ctx.stroke();
-
-                // Character Body
-                ctx.fillStyle = actor.spec.color;
-                ctx.beginPath();
-                ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Direction Pointer Line
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.lineTo(Math.cos(actor.angle) * (actor.radius + 10), Math.sin(actor.angle) * (actor.radius + 10));
-                ctx.stroke();
-
-                // Health Bar HUD
-                const hpWidth = 50;
-                const hpHeight = 6;
-                const hpRatio = actor.hp / actor.maxHp;
-
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-                ctx.fillRect(-hpWidth / 2, -actor.radius - 20, hpWidth, hpHeight);
-
-                ctx.fillStyle = actor.team === 'blue' ? '#00f0ff' : '#f43f5e';
-                ctx.fillRect(-hpWidth / 2, -actor.radius - 20, hpWidth * hpRatio, hpHeight);
-
-                // Actor Name & Gem Counter
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 10px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(actor.name, 0, -actor.radius - 24);
-
-                if (actor.gems > 0) {
-                    ctx.fillStyle = '#f59e0b';
-                    ctx.fillText(`💎 ${actor.gems}`, 0, actor.radius + 16);
-                }
-
-                ctx.restore();
-            });
-
-            ctx.restore(); // Restore Camera
-        }
-
-        function checkVictoryCondition(timeUp = false, winnerTeam = null) {
-            gameActive = false;
-            clearInterval(timerInterval);
-
-            const blueGems = actors.filter(a => a.team === 'blue').reduce((acc, a) => acc + a.gems, 0);
-            const redGems = actors.filter(a => a.team === 'red').reduce((acc, a) => acc + a.gems, 0);
-
-            if (!winnerTeam) {
-                winnerTeam = blueGems >= redGems ? 'Blue Team' : 'Red Team';
-            }
-
-            const title = document.getElementById('winner-title');
-            const sub = document.getElementById('winner-subtitle');
-
-            if (winnerTeam === 'Blue Team') {
-                title.innerText = "VICTORY!";
-                title.className = "text-5xl md:text-7xl font-black italic mb-2 tracking-wider text-cyan-400";
-                sub.innerText = "Your team dominated the Cyber Arena!";
-            } else {
-                title.innerText = "DEFEAT";
-                title.className = "text-5xl md:text-7xl font-black italic mb-2 tracking-wider text-rose-500";
-                sub.innerText = "Red team captured the arena crystals!";
-            }
-
-            document.getElementById('stat-kills').innerText = player.kills;
-            document.getElementById('stat-gems').innerText = player.gems;
-            document.getElementById('stat-dmg').innerText = Math.round(player.damageDealt);
-
-            document.getElementById('game-over-modal').classList.remove('hidden');
-        }
-
-        function resetToMenu() {
-            document.getElementById('game-over-modal').classList.add('hidden');
-            document.getElementById('hud-panel').classList.add('hidden');
-            document.getElementById('action-bar').classList.add('hidden');
-            document.getElementById('hero-select-modal').classList.remove('hidden');
-        }
-
-        // Initialize Controls on Load
-        window.onload = setupControls;
-    </script>
+window.onload = initHeroSelection;
+</script>
 </body>
 </html>
