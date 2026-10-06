@@ -1,0 +1,762 @@
+
+                this.skillCd = this.spec.skillCd;
+                const ang = Math.atan2(targetY - this.y, targetX - this.x);
+
+                if (this.heroKey === 'kael') {
+                    // Shield Dash
+                    this.shield = 300;
+                    this.x += Math.cos(ang) * 140;
+                    this.y += Math.sin(ang) * 140;
+                    createExplosion(this.x, this.y, '#00f0ff', 40);
+                } else if (this.heroKey === 'luna') {
+                    // Frost Nova Teleport
+                    createExplosion(this.x, this.y, '#a855f7', 50);
+                    this.x += Math.cos(ang) * 180;
+                    this.y += Math.sin(ang) * 180;
+                    createExplosion(this.x, this.y, '#c084fc', 50);
+                } else if (this.heroKey === 'drax') {
+                    // Stealth Smoke Screen
+                    this.stealth = true;
+                    this.stealthTimer = 3.5;
+                    createExplosion(this.x, this.y, '#10b981', 60);
+                }
+            }
+
+            useUltimate(targetX, targetY) {
+                if (this.ultCd > 0 || this.hp <= 0) return;
+                this.ultCd = this.spec.ultCd;
+                const ang = Math.atan2(targetY - this.y, targetX - this.x);
+
+                if (this.heroKey === 'kael') {
+                    // Ground Shatter Slam
+                    createExplosion(this.x, this.y, '#f59e0b', 120);
+                    actors.forEach(other => {
+                        if (other !== this && other.team !== this.team && other.hp > 0) {
+                            if (Math.hypot(other.x - this.x, other.y - this.y) < 160) {
+                                other.takeDamage(320, this);
+                            }
+                        }
+                    });
+                } else if (this.heroKey === 'luna') {
+                    // Cosmic Meteor Barrage
+                    for (let i = 0; i < 5; i++) {
+                        setTimeout(() => {
+                            const rx = targetX + (Math.random() - 0.5) * 160;
+                            const ry = targetY + (Math.random() - 0.5) * 160;
+                            createExplosion(rx, ry, '#c084fc', 90);
+                            actors.forEach(other => {
+                                if (other !== this && other.team !== this.team && other.hp > 0) {
+                                    if (Math.hypot(other.x - rx, other.y - ry) < 90) {
+                                        other.takeDamage(180, this);
+                                    }
+                                }
+                            });
+                        }, i * 200);
+                    }
+                } else if (this.heroKey === 'drax') {
+                    // Orbital Laser Beam
+                    createOrbitalBeam(targetX, targetY, this);
+                }
+            }
+
+            takeDamage(amount, attacker) {
+                if (this.shield > 0) {
+                    if (this.shield >= amount) {
+                        this.shield -= amount;
+                        amount = 0;
+                    } else {
+                        amount -= this.shield;
+                        this.shield = 0;
+                    }
+                }
+
+                this.hp -= amount;
+                if (attacker) attacker.damageDealt += amount;
+
+                // Floating Damage Indicator
+                showDamageText(this.x, this.y, Math.round(amount));
+
+                if (this.hp <= 0) {
+                    this.die(attacker);
+                }
+            }
+
+            die(killer) {
+                this.hp = 0;
+                createExplosion(this.x, this.y, this.spec.color, 80);
+
+                // Drop Held Gems
+                if (this.gems > 0) {
+                    for (let i = 0; i < this.gems; i++) {
+                        gems.push({
+                            x: this.x + (Math.random() - 0.5) * 60,
+                            y: this.y + (Math.random() - 0.5) * 60,
+                            radius: 12
+                        });
+                    }
+                    this.gems = 0;
+                }
+
+                if (killer) {
+                    killer.kills++;
+                    addKillFeedEntry(killer.name, this.name, killer.team);
+                }
+
+                // Respawn Timer Logic
+                setTimeout(() => {
+                    if (!gameActive) return;
+                    this.hp = this.maxHp;
+                    const spawn = this.team === 'blue' ? { x: 150, y: WORLD.height / 2 } : { x: WORLD.width - 150, y: WORLD.height / 2 };
+                    this.x = spawn.x;
+                    this.y = spawn.y;
+                }, 4000);
+            }
+
+            updateAI(dt) {
+                this.aiTimer -= dt;
+                if (this.aiTimer <= 0) {
+                    this.aiTimer = 0.2 + Math.random() * 0.2;
+
+                    // AI Target Priority: Nearest Gem OR Nearest Enemy
+                    let closestGem = null;
+                    let minDistG = 9999;
+                    gems.forEach(g => {
+                        const d = Math.hypot(g.x - this.x, g.y - this.y);
+                        if (d < minDistG) { minDistG = d; closestGem = g; }
+                    });
+
+                    let closestEnemy = null;
+                    let minDistE = 9999;
+                    actors.forEach(a => {
+                        if (a.team !== this.team && a.hp > 0 && !a.stealth) {
+                            const d = Math.hypot(a.x - this.x, a.y - this.y);
+                            if (d < minDistE) { minDistE = d; closestEnemy = a; }
+                        }
+                    });
+
+                    // Decision State
+                    if (selectedMode === 'gem' && closestGem && minDistG < 400) {
+                        this.aiTarget = closestGem;
+                    } else if (closestEnemy) {
+                        this.aiTarget = closestEnemy;
+                    } else {
+                        this.aiTarget = { x: WORLD.width / 2, y: WORLD.height / 2 };
+                    }
+                }
+
+                if (this.aiTarget) {
+                    const dx = this.aiTarget.x - this.x;
+                    const dy = this.aiTarget.y - this.y;
+                    this.move(dx, dy, dt);
+
+                    // Auto Attack / Skill Usage
+                    if (this.aiTarget.hp !== undefined && this.aiTarget.hp > 0) {
+                        const dist = Math.hypot(dx, dy);
+                        if (dist < this.spec.attackRange + 50) {
+                            this.performBasicAttack(this.aiTarget.x, this.aiTarget.y);
+                        }
+                        if (dist < 200 && this.ultCd <= 0) {
+                            this.useUltimate(this.aiTarget.x, this.aiTarget.y);
+                        } else if (dist < 150 && this.skillCd <= 0) {
+                            this.useSkill(this.aiTarget.x, this.aiTarget.y);
+                        }
+                    }
+                }
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, angle, speed, dmg, maxRange, owner, color) {
+                this.x = x; this.y = y;
+                this.startX = x; this.startY = y;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.dmg = dmg;
+                this.maxRange = maxRange;
+                this.owner = owner;
+                this.color = color;
+                this.alive = true;
+            }
+
+            update(dt) {
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+
+                // Check Max Range
+                if (Math.hypot(this.x - this.startX, this.y - this.startY) >= this.maxRange) {
+                    this.alive = false;
+                }
+
+                // Check Wall Collision
+                for (let wall of obstacles) {
+                    if (checkCircleRectOverlap(this.x, this.y, 6, wall)) {
+                        this.alive = false;
+                        createExplosion(this.x, this.y, this.color, 15);
+                        return;
+                    }
+                }
+
+                // Check Actor Collisions
+                actors.forEach(actor => {
+                    if (this.alive && actor !== this.owner && actor.team !== this.owner.team && actor.hp > 0) {
+                        if (Math.hypot(actor.x - this.x, actor.y - this.y) < actor.radius + 6) {
+                            actor.takeDamage(this.dmg, this.owner);
+                            this.alive = false;
+                            createExplosion(this.x, this.y, this.color, 25);
+                        }
+                    }
+                });
+            }
+
+            draw() {
+                ctx.save();
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function checkCircleRectOverlap(cx, cy, r, rect) {
+            const nearestX = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
+            const nearestY = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
+            const dx = cx - nearestX;
+            const dy = cy - nearestY;
+            return (dx * dx + dy * dy) < (r * r);
+        }
+
+        function normalizeAngle(a) {
+            while (a > Math.PI) a -= Math.PI * 2;
+            while (a < -Math.PI) a += Math.PI * 2;
+            return a;
+        }
+
+        function createExplosion(x, y, color, count = 30) {
+            for (let i = 0; i < count; i++) {
+                const ang = Math.random() * Math.PI * 2;
+                const spd = 50 + Math.random() * 200;
+                particles.push({
+                    x: x, y: y,
+                    vx: Math.cos(ang) * spd,
+                    vy: Math.sin(ang) * spd,
+                    life: 0.4 + Math.random() * 0.3,
+                    maxLife: 0.7,
+                    color: color,
+                    size: 3 + Math.random() * 4
+                });
+            }
+        }
+
+        function createSlashEffect(x, y, angle, range, team) {
+            for (let i = 0; i < 15; i++) {
+                const a = angle + (Math.random() - 0.5) * 1.2;
+                const spd = 150 + Math.random() * 150;
+                particles.push({
+                    x: x, y: y,
+                    vx: Math.cos(a) * spd,
+                    vy: Math.sin(a) * spd,
+                    life: 0.25, maxLife: 0.25,
+                    color: team === 'blue' ? '#00f0ff' : '#f43f5e',
+                    size: 4
+                });
+            }
+        }
+
+        function createOrbitalBeam(targetX, targetY, owner) {
+            let ticks = 0;
+            const beamInterval = setInterval(() => {
+                if (!gameActive || ticks > 10) { clearInterval(beamInterval); return; }
+                createExplosion(targetX, targetY, '#10b981', 40);
+                actors.forEach(other => {
+                    if (other.team !== owner.team && other.hp > 0) {
+                        if (Math.hypot(other.x - targetX, other.y - targetY) < 100) {
+                            other.takeDamage(45, owner);
+                        }
+                    }
+                });
+                ticks++;
+            }, 100);
+        }
+
+        function showDamageText(x, y, text) {
+            const el = document.createElement('div');
+            el.className = 'dmg-text text-rose-400';
+            el.innerText = text;
+            
+            // Map World Coords to Screen Coords
+            const screenX = x - (player.x - canvas.width / 2);
+            const screenY = y - (player.y - canvas.height / 2);
+            el.style.left = `${screenX}px`;
+            el.style.top = `${screenY}px`;
+            document.getElementById('game-container').appendChild(el);
+            setTimeout(() => el.remove(), 800);
+        }
+
+        function addKillFeedEntry(killer, victim, team) {
+            const feed = document.getElementById('kill-feed');
+            const item = document.createElement('div');
+            item.className = 'glass-panel px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 border-l-4 ' + (team === 'blue' ? 'border-cyan-400' : 'border-rose-500');
+            item.innerHTML = `<span>${killer}</span> <i class="fa-solid fa-crosshairs text-slate-400"></i> <span>${victim}</span>`;
+            feed.appendChild(item);
+            setTimeout(() => item.remove(), 3500);
+        }
+
+        function setupControls() {
+            // Resize Canvas
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            // Keyboard Listeners
+            window.addEventListener('keydown', e => {
+                keys[e.key.toLowerCase()] = true;
+                if (e.code === 'Space') player?.useSkill(mouse.worldX, mouse.worldY);
+                if (e.key.toLowerCase() === 'e') player?.useUltimate(mouse.worldX, mouse.worldY);
+            });
+            window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+            // Mouse Listeners
+            canvas.addEventListener('mousemove', e => {
+                const rect = canvas.getBoundingClientRect();
+                mouse.x = e.clientX - rect.left;
+                mouse.y = e.clientY - rect.top;
+            });
+            canvas.addEventListener('mousedown', () => {
+                mouse.isDown = true;
+                if (player && player.hp > 0) player.performBasicAttack(mouse.worldX, mouse.worldY);
+            });
+            canvas.addEventListener('mouseup', () => mouse.isDown = false);
+
+            // Touch Joystick Setup (Mobile / Telegram Mini App)
+            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                document.getElementById('move-joystick-zone').style.display = 'block';
+                document.getElementById('aim-joystick-zone').style.display = 'block';
+
+                bindJoystick('move-joystick-zone', 'move-knob', moveJoy);
+                bindJoystick('aim-joystick-zone', 'aim-knob', aimJoy, true);
+            }
+
+            // Skill Button Click Bindings
+            document.getElementById('btn-skill1').addEventListener('click', () => {
+                player?.useSkill(mouse.worldX, mouse.worldY);
+            });
+            document.getElementById('btn-ult').addEventListener('click', () => {
+                player?.useUltimate(mouse.worldX, mouse.worldY);
+            });
+        }
+
+        function bindJoystick(zoneId, knobId, stateObj, isAim = false) {
+            const zone = document.getElementById(zoneId);
+            const knob = document.getElementById(knobId);
+            let rect = null;
+
+            zone.addEventListener('touchstart', e => {
+                e.preventDefault();
+                rect = zone.getBoundingClientRect();
+                stateObj.active = true;
+                handleTouch(e.touches[0]);
+            });
+
+            zone.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if (stateObj.active) handleTouch(e.touches[0]);
+            });
+
+            const endTouch = () => {
+                stateObj.active = false;
+                stateObj.dx = 0; stateObj.dy = 0;
+                knob.style.left = '50px'; knob.style.top = '50px';
+            };
+
+            zone.addEventListener('touchend', endTouch);
+            zone.addEventListener('touchcancel', endTouch);
+
+            function handleTouch(t) {
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                let dx = t.clientX - cx;
+                let dy = t.clientY - cy;
+                const dist = Math.hypot(dx, dy);
+                const maxR = 45;
+
+                if (dist > maxR) {
+                    dx = (dx / dist) * maxR;
+                    dy = (dy / dist) * maxR;
+                }
+
+                knob.style.left = `${50 + dx}px`;
+                knob.style.top = `${50 + dy}px`;
+
+                stateObj.dx = dx / maxR;
+                stateObj.dy = dy / maxR;
+
+                if (isAim && player && player.hp > 0 && Math.hypot(dx, dy) > 15) {
+                    const targetX = player.x + stateObj.dx * 200;
+                    const targetY = player.y + stateObj.dy * 200;
+                    player.performBasicAttack(targetX, targetY);
+                }
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        function selectHero(key) {
+            selectedHeroKey = key;
+            document.querySelectorAll('.hero-card').forEach(c => {
+                c.classList.remove('border-cyan-400', 'bg-cyan-950/20');
+                c.classList.add('border-slate-700', 'bg-slate-900/40');
+            });
+            const card = document.getElementById(`card-${key}`);
+            card.classList.add('border-cyan-400', 'bg-cyan-950/20');
+        }
+
+        function setMode(mode) {
+            selectedMode = mode;
+            document.getElementById('mode-gem').className = mode === 'gem' ? 
+                'px-5 py-2.5 rounded-xl font-bold text-sm bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/30 transition-all' : 
+                'px-5 py-2.5 rounded-xl font-bold text-sm text-slate-400 hover:text-white transition-all';
+            document.getElementById('mode-dm').className = mode === 'dm' ? 
+                'px-5 py-2.5 rounded-xl font-bold text-sm bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/30 transition-all' : 
+                'px-5 py-2.5 rounded-xl font-bold text-sm text-slate-400 hover:text-white transition-all';
+        }
+
+        function startGame() {
+            document.getElementById('hero-select-modal').classList.add('hidden');
+            document.getElementById('hud-panel').classList.remove('hidden');
+            document.getElementById('action-bar').classList.remove('hidden');
+
+            initArenaMap();
+            actors = [];
+            projectiles = [];
+            particles = [];
+
+            // Create Player
+            player = new Actor(150, WORLD.height / 2, selectedHeroKey, 'blue', false, "YOU");
+            actors.push(player);
+
+            // Create Teammates & Enemies (3v3 Setup)
+            if (selectedMode === 'gem') {
+                actors.push(new Actor(150, WORLD.height / 2 - 180, 'luna', 'blue', true, "Bot Blue 1"));
+                actors.push(new Actor(150, WORLD.height / 2 + 180, 'drax', 'blue', true, "Bot Blue 2"));
+
+                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2, 'kael', 'red', true, "Bot Red 1"));
+                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2 - 180, 'luna', 'red', true, "Bot Red 2"));
+                actors.push(new Actor(WORLD.width - 150, WORLD.height / 2 + 180, 'drax', 'red', true, "Bot Red 3"));
+            } else {
+                // Free For All Deathmatch
+                const heroes = ['kael', 'luna', 'drax'];
+                for (let i = 0; i < 5; i++) {
+                    actors.push(new Actor(
+                        300 + Math.random() * (WORLD.width - 600),
+                        200 + Math.random() * (WORLD.height - 400),
+                        heroes[i % 3], 'red', true, `Enemy ${i+1}`
+                    ));
+                }
+            }
+
+            gameActive = true;
+            gameTimeLeft = 120;
+            lastTime = performance.now();
+
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                if (!gameActive) return;
+                gameTimeLeft--;
+                const mins = String(Math.floor(gameTimeLeft / 60)).padStart(2, '0');
+                const secs = String(gameTimeLeft % 60).padStart(2, '0');
+                document.getElementById('game-timer').innerText = `${mins}:${secs}`;
+
+                if (gameTimeLeft <= 0) checkVictoryCondition(true);
+            }, 1000);
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(now) {
+            if (!gameActive) return;
+            const dt = Math.min((now - lastTime) / 1000, 0.1);
+            lastTime = now;
+
+            update(dt);
+            render();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update(dt) {
+            // Handle Player Keyboard Input
+            let moveX = 0, moveY = 0;
+            if (keys['w'] || keys['arrowup']) moveY -= 1;
+            if (keys['s'] || keys['arrowdown']) moveY += 1;
+            if (keys['a'] || keys['arrowleft']) moveX -= 1;
+            if (keys['d'] || keys['arrowright']) moveX += 1;
+
+            if (moveJoy.active) {
+                moveX = moveJoy.dx;
+                moveY = moveJoy.dy;
+            }
+
+            if (player && player.hp > 0) {
+                player.move(moveX, moveY, dt);
+                if (mouse.isDown) player.performBasicAttack(mouse.worldX, mouse.worldY);
+            }
+
+            // Spawns Central Gem Crystals
+            gemSpawner.spawnTimer += dt;
+            if (gemSpawner.spawnTimer >= 5.0 && gems.length < 12) {
+                gemSpawner.spawnTimer = 0;
+                gems.push({
+                    x: gemSpawner.x + (Math.random() - 0.5) * 60,
+                    y: gemSpawner.y + (Math.random() - 0.5) * 60,
+                    radius: 12
+                });
+            }
+
+            // Update Actors
+            actors.forEach(actor => {
+                actor.update(dt);
+
+                // Pickup Gems
+                gems.forEach((gem, idx) => {
+                    if (actor.hp > 0 && Math.hypot(actor.x - gem.x, actor.y - gem.y) < actor.radius + gem.radius) {
+                        actor.gems++;
+                        gems.splice(idx, 1);
+                    }
+                });
+            });
+
+            // Update Projectiles
+            projectiles.forEach(p => p.update(dt));
+            projectiles = projectiles.filter(p => p.alive);
+
+            // Update Particles
+            particles.forEach(p => {
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= dt;
+            });
+            particles = particles.filter(p => p.life > 0);
+
+            // Update HUD Stats
+            const blueGems = actors.filter(a => a.team === 'blue').reduce((acc, a) => acc + a.gems, 0);
+            const redGems = actors.filter(a => a.team === 'red').reduce((acc, a) => acc + a.gems, 0);
+            document.getElementById('blue-gems').innerText = `Gems: ${blueGems}`;
+            document.getElementById('red-gems').innerText = `Gems: ${redGems}`;
+
+            // Cooldown HUD Updates
+            if (player) {
+                updateCdOverlay('cd-skill1', player.skillCd);
+                updateCdOverlay('cd-ult', player.ultCd);
+            }
+
+            // Check Instant Win Condition (10 Gems)
+            if (selectedMode === 'gem') {
+                if (blueGems >= 10) checkVictoryCondition(false, 'Blue Team');
+                if (redGems >= 10) checkVictoryCondition(false, 'Red Team');
+            }
+        }
+
+        function updateCdOverlay(id, cdValue) {
+            const el = document.getElementById(id);
+            if (cdValue > 0) {
+                el.classList.remove('hidden');
+                el.innerText = cdValue.toFixed(1);
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Camera Tracking (Centered on Player)
+            ctx.save();
+            const camX = canvas.width / 2 - player.x;
+            const camY = canvas.height / 2 - player.y;
+            ctx.translate(camX, camY);
+
+            // Update Mouse World Position
+            mouse.worldX = mouse.x - camX;
+            mouse.worldY = mouse.y - camY;
+
+            // Render Grid Floor Pattern
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            const gridSize = 80;
+            for (let x = 0; x < WORLD.width; x += gridSize) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD.height); ctx.stroke();
+            }
+            for (let y = 0; y < WORLD.height; y += gridSize) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD.width, y); ctx.stroke();
+            }
+
+            // Render Arena Boundary
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 15;
+            ctx.strokeRect(0, 0, WORLD.width, WORLD.height);
+            ctx.shadowBlur = 0;
+
+            // Render Bushes
+            bushes.forEach(b => {
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
+                ctx.strokeStyle = '#10b981';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            });
+
+            // Render Obstacles / Barriers
+            ctx.fillStyle = '#1e293b';
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 3;
+            obstacles.forEach(w => {
+                ctx.fillRect(w.x, w.y, w.w, w.h);
+                ctx.strokeRect(w.x, w.y, w.w, w.h);
+            });
+
+            // Render Central Gem Spawner Platform
+            ctx.fillStyle = '#0f172a';
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(gemSpawner.x, gemSpawner.y, 45, 0, Math.PI * 2);
+            ctx.fill(); ctx.stroke();
+
+            // Render Gems
+            gems.forEach(g => {
+                ctx.fillStyle = '#f59e0b';
+                ctx.shadowColor = '#f59e0b';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            });
+
+            // Render Projectiles
+            projectiles.forEach(p => p.draw());
+
+            // Render Particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / p.maxLife;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            });
+
+            // Render Actors / Players
+            actors.forEach(actor => {
+                if (actor.hp <= 0) return;
+
+                // Stealth Visibility Check
+                if (actor.stealth && actor.team !== player.team) return;
+
+                ctx.save();
+                ctx.translate(actor.x, actor.y);
+
+                // Bush Stealth Transparency
+                if (actor.inBush) ctx.globalAlpha = 0.5;
+
+                // Player Indicator Ring
+                ctx.strokeStyle = actor.team === 'blue' ? '#00f0ff' : '#f43f5e';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(0, 0, actor.radius + 4, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Character Body
+                ctx.fillStyle = actor.spec.color;
+                ctx.beginPath();
+                ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Direction Pointer Line
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.cos(actor.angle) * (actor.radius + 10), Math.sin(actor.angle) * (actor.radius + 10));
+                ctx.stroke();
+
+                // Health Bar HUD
+                const hpWidth = 50;
+                const hpHeight = 6;
+                const hpRatio = actor.hp / actor.maxHp;
+
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(-hpWidth / 2, -actor.radius - 20, hpWidth, hpHeight);
+
+                ctx.fillStyle = actor.team === 'blue' ? '#00f0ff' : '#f43f5e';
+                ctx.fillRect(-hpWidth / 2, -actor.radius - 20, hpWidth * hpRatio, hpHeight);
+
+                // Actor Name & Gem Counter
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(actor.name, 0, -actor.radius - 24);
+
+                if (actor.gems > 0) {
+                    ctx.fillStyle = '#f59e0b';
+                    ctx.fillText(`💎 ${actor.gems}`, 0, actor.radius + 16);
+                }
+
+                ctx.restore();
+            });
+
+            ctx.restore(); // Restore Camera
+        }
+
+        function checkVictoryCondition(timeUp = false, winnerTeam = null) {
+            gameActive = false;
+            clearInterval(timerInterval);
+
+            const blueGems = actors.filter(a => a.team === 'blue').reduce((acc, a) => acc + a.gems, 0);
+            const redGems = actors.filter(a => a.team === 'red').reduce((acc, a) => acc + a.gems, 0);
+
+            if (!winnerTeam) {
+                winnerTeam = blueGems >= redGems ? 'Blue Team' : 'Red Team';
+            }
+
+            const title = document.getElementById('winner-title');
+            const sub = document.getElementById('winner-subtitle');
+
+            if (winnerTeam === 'Blue Team') {
+                title.innerText = "VICTORY!";
+                title.className = "text-5xl md:text-7xl font-black italic mb-2 tracking-wider text-cyan-400";
+                sub.innerText = "Your team dominated the Cyber Arena!";
+            } else {
+                title.innerText = "DEFEAT";
+                title.className = "text-5xl md:text-7xl font-black italic mb-2 tracking-wider text-rose-500";
+                sub.innerText = "Red team captured the arena crystals!";
+            }
+
+            document.getElementById('stat-kills').innerText = player.kills;
+            document.getElementById('stat-gems').innerText = player.gems;
+            document.getElementById('stat-dmg').innerText = Math.round(player.damageDealt);
+
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        function resetToMenu() {
+            document.getElementById('game-over-modal').classList.add('hidden');
+            document.getElementById('hud-panel').classList.add('hidden');
+            document.getElementById('action-bar').classList.add('hidden');
+            document.getElementById('hero-select-modal').classList.remove('hidden');
+        }
+
+        // Initialize Controls on Load
+        window.onload = setupControls;
+    </script>
+</body>
+</html>
